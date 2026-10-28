@@ -355,7 +355,7 @@ function handleImageReady() {
 function loadSampleImage() {
   resetSession()
   mode.value = 'image'
-  imageUrl.value = '/sample-face.jpg'
+  imageUrl.value = 'sample-face.jpg'
   fileName.value = '示例人像 · face-api demo'
   emitStatus('searching', '正在读取示例图片')
   nextTick(() => {
