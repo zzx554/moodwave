@@ -400,7 +400,7 @@ function scoreLabel(score) {
           离线曲目来源：SoundHelix 免费示例音乐（T. Schürger），已保存至 <code>public/music</code>。
         </span>
         <span v-else-if="activeTab === 'netease'">
-          在线曲目来自网易云音乐曲库检索结果，播放经本地代理转发外链音源，版权归原作者所有。
+          在线曲目来自网易云音乐曲库（构建时同步快照），播放为网易云外链音源，版权归原作者所有。
         </span>
         <span v-else>
           在线曲目来自 Apple iTunes Search API，播放为 30 秒官方试听片段，版权归原作者所有。

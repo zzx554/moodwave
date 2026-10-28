@@ -1,37 +1,7 @@
 import { clamp01 } from '../data/emotions.js'
+import { QUERY_BANK } from '../data/neteaseQueries.js'
+import snapshot from '../data/netease-snapshot.json'
 import { getRecommendationTarget, scoreTrack } from './recommender.js'
-
-// 网易云检索词：每个情绪 × 策略组合准备 3 组中文关键词，用于「换一批」
-const QUERY_BANK = {
-  happy: {
-    resonate: ['欢快 流行', '开心 舞曲', '阳光 电子'],
-    regulate: ['治愈 轻音乐', '温暖 民谣', '舒缓 钢琴'],
-  },
-  neutral: {
-    resonate: ['安静 轻音乐', '氛围 电子', '慵懒 爵士'],
-    regulate: ['温暖 灵魂乐', '独立 民谣', '轻柔 爵士'],
-  },
-  surprised: {
-    resonate: ['节奏感 电子', '活力 流行', '电音 舞曲'],
-    regulate: ['舒缓 钢琴', '梦幻 独立', '轻电子'],
-  },
-  sad: {
-    resonate: ['伤感 民谣', '悲伤 钢琴', '慢歌 抒情'],
-    regulate: ['治愈 民谣', '温暖 钢琴', '励志 流行'],
-  },
-  angry: {
-    resonate: ['摇滚 燃', '高能 电子', '说唱 硬核'],
-    regulate: ['放松 轻音乐', '安静 钢琴', '舒缓 民谣'],
-  },
-  fearful: {
-    resonate: ['暗黑 氛围', '悬疑 配乐', '低沉 电子'],
-    regulate: ['安抚 钢琴', '安全 氛围', '温柔 民谣'],
-  },
-  disgusted: {
-    resonate: ['蓝调 粗粝', '另类 摇滚', '工业 电子'],
-    regulate: ['清新 流行', '干净 民谣', '轻盈 电子'],
-  },
-}
 
 const STRATEGY_LABEL = {
   resonate: '共鸣向',
@@ -96,12 +66,11 @@ function buildNeteaseTrack(raw, index, emotion, strategy, total) {
   const energy = clamp01(target.energy * 0.45 + 0.275 + (seedTwo - 0.5) * 1)
   const rankFit = 1 - index / Math.max(total, 1)
   const seconds = Math.round((Number(raw.duration) || 0) / 1000)
-  const album = raw.album?.name || '网易云音乐'
-  const artist =
-    (raw.artists || [])
-      .map((item) => item.name)
-      .filter(Boolean)
-      .join(' / ') || raw.album?.artist?.name || '未知艺人'
+  const album =
+    raw.album?.name || (typeof raw.album === 'string' ? raw.album : '') || '网易云音乐'
+  const artist = raw.artists
+    ? (raw.artists || []).map((item) => item.name).filter(Boolean).join(' / ')
+    : raw.artist || '未知艺人'
 
   return {
     id: `netease-${raw.id}`,
@@ -109,8 +78,11 @@ function buildNeteaseTrack(raw, index, emotion, strategy, total) {
     artist,
     album,
     source: 'netease',
-    // 播放地址由本地代理转发，代理会跟随网易云的 302 跳转
-    src: `/api/nm-play/song/media/outer/url?id=${raw.id}.mp3`,
+    // 开发环境经本地代理取流；静态部署（GitHub Pages）直接使用网易云外链，
+    // 外链会 302 到 CDN，音频元素不受跨域限制
+    src: import.meta.env.DEV
+      ? `/api/nm-play/song/media/outer/url?id=${raw.id}.mp3`
+      : `https://music.163.com/song/media/outer/url?id=${raw.id}.mp3`,
     songId: String(raw.id),
     genre: '网易云曲库',
     moods: [emotion],
@@ -124,50 +96,26 @@ function buildNeteaseTrack(raw, index, emotion, strategy, total) {
   }
 }
 
-export async function fetchNeteaseTracks({ emotion, strategy, variant = 0, signal }) {
-  const key = `${emotion}-${strategy}-${variant}`
-  const cached = cache.get(key)
-  if (cached && Date.now() - cached.time < CACHE_TTL) {
-    return cached.tracks
-  }
-
-  const { query } = getNeteaseQueryMeta(emotion, strategy, variant)
-  const params = new URLSearchParams({
-    s: query,
-    type: '1',
-    offset: '0',
-    limit: '30',
-  })
-
-  // 经 Vite 代理转发到 music.163.com/api/search/get/web
-  const response = await fetch(`/api/netease/search/get/web?${params.toString()}`, { signal })
-  if (!response.ok) {
-    throw new Error(`网易云曲库响应异常（HTTP ${response.status}）`)
-  }
-
-  const data = await response.json()
+function finalizeTracks(rawList, emotion, strategy) {
   const seen = new Set()
-  const rawTracks = (data?.result?.songs || []).filter((item) => {
+  const filtered = rawList.filter((item) => {
     if (!item.id || !item.name) return false
     // fee=1 为会员歌曲，外链播放通常会被拦成 404，直接排除
     if (item.fee === 1) return false
     if (Number(item.duration) < 45000) return false
-    const artistText = (item.artists || []).map((a) => a.name).join('/')
+    const artistText = item.artists
+      ? item.artists.map((a) => a.name).join('/')
+      : item.artist || ''
     const signature = `${item.name}-${artistText}`.toLowerCase()
     if (seen.has(signature)) return false
     seen.add(signature)
     return true
   })
 
-  if (!rawTracks.length) {
-    throw new Error('网易云曲库暂时没有检索到可推荐歌曲')
-  }
+  if (!filtered.length) return []
 
-  const formatted = rawTracks.map((raw, index) =>
-    buildNeteaseTrack(raw, index, emotion, strategy, rawTracks.length)
-  )
-
-  const scored = formatted
+  const scored = filtered
+    .map((raw, index) => buildNeteaseTrack(raw, index, emotion, strategy, filtered.length))
     .map((track) => scoreTrack(track, emotion, strategy))
     .sort((a, b) => b.score - a.score)
   const artistCount = new Map()
@@ -179,6 +127,51 @@ export async function fetchNeteaseTracks({ emotion, strategy, variant = 0, signa
     artistCount.set(track.artist, count + 1)
     tracks.push(track)
     if (tracks.length >= 12) break
+  }
+  return tracks
+}
+
+// 静态快照分组：优先当前变体，取不到时依次尝试其他关键词变体
+function snapshotGroup(emotion, strategy, variant) {
+  const total = getNeteaseVariantCount(emotion, strategy)
+  for (let step = 0; step < total; step += 1) {
+    const index = ((((variant % total) + step) % total) + total) % total
+    const list = snapshot.groups?.[`${emotion}-${strategy}-${index}`]
+    if (list?.length) return list
+  }
+  return []
+}
+
+export async function fetchNeteaseTracks({ emotion, strategy, variant = 0, signal }) {
+  const key = `${emotion}-${strategy}-${variant}`
+  const cached = cache.get(key)
+  if (cached && Date.now() - cached.time < CACHE_TTL) {
+    return cached.tracks
+  }
+
+  let tracks = []
+
+  if (import.meta.env.DEV) {
+    // 开发环境走本地代理实时检索，代理不可用时回退到构建时快照
+    const { query } = getNeteaseQueryMeta(emotion, strategy, variant)
+    const params = new URLSearchParams({ s: query, type: '1', offset: '0', limit: '30' })
+    try {
+      const response = await fetch(`/api/netease/search/get/web?${params.toString()}`, { signal })
+      if (!response.ok) throw new Error(`网易云曲库响应异常（HTTP ${response.status}）`)
+      const data = await response.json()
+      tracks = finalizeTracks(data?.result?.songs || [], emotion, strategy)
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error
+    }
+  }
+
+  // 生产构建（GitHub Pages）没有检索代理，直接读取构建时同步的曲库快照
+  if (!tracks.length) {
+    tracks = finalizeTracks(snapshotGroup(emotion, strategy, variant), emotion, strategy)
+  }
+
+  if (!tracks.length) {
+    throw new Error('网易云曲库暂时没有检索到可推荐歌曲')
   }
 
   cache.set(key, { time: Date.now(), tracks })

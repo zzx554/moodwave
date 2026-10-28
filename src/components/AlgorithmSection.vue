@@ -283,9 +283,10 @@ const emit = defineEmits(['close'])
         <span class="algo-kicker">ONLINE SOURCE</span>
         <h3>在线歌曲 API</h3>
         <p>
-          在线推荐优先通过网易云音乐检索接口（经本地代理转发）按情绪与策略用中文关键词检索，
-          再进入同一排序公式；网易云不可达时自动回退 iTunes Search API。结果缓存 10 分钟，
-          播放地址经本地代理转发网易云外链音源。
+          在线推荐使用网易云音乐检索接口，按情绪与策略用中文关键词检索，再进入同一排序公式。
+          GitHub Pages 是纯静态托管，无法运行检索代理，因此构建时会把每个情绪分组的检索结果
+          与可播校验结果同步为曲库快照（<code>src/data/netease-snapshot.json</code>）：
+          线上直接读取快照并播放网易云外链音源，开发环境仍走本地代理实时检索。结果缓存 10 分钟。
         </p>
         <code>GET /api/netease/search/get/web?s=&lt;emotion-query&gt;&amp;type=1</code>
         <code>https://itunes.apple.com/search?term=&lt;emotion-query&gt;&amp;media=music&amp;entity=song</code>
